@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <!-- OpenStreetMap verlangt eine Herkunftsangabe beim Laden der Karte. "strict-origin" schickt nur
+       https://louisl97.github.io/ – der Link-Code hinter dem # wird nie mitgeschickt. -->
+  <meta name="referrer" content="strict-origin">
+  <meta name="theme-color" content="#E8590C">
+  <title>Live-Lauf</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <style>
+    :root {
+      --bg: #f4f4f5;
+      --card: #ffffff;
+      --text: #18181b;
+      --muted: #71717a;
+      --line: #e4e4e7;
+      --accent: #e8590c;
+      --plan: #1e88e5;
+      --good: #2e7d32;
+      --warn: #f9a825;
+      --bad: #c62828;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f0f12;
+        --card: #1b1b20;
+        --text: #f4f4f5;
+        --muted: #a1a1aa;
+        --line: #2e2e35;
+        --accent: #ff8a4c;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    body { display: flex; flex-direction: column; }
+    .wrap { position: relative; flex: 1 1 auto; display: flex; min-height: 45vh; }
+    #map { flex: 1; background: var(--line); }
+    .sheet { background: var(--card); border-radius: 20px 20px 0 0; margin-top: -18px; position: relative;
+      z-index: 500; padding: 14px 16px calc(16px + env(safe-area-inset-bottom)); box-shadow: 0 -4px 20px rgba(0,0,0,.12); }
+    .top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+      font-size: 13px; font-weight: 600; background: var(--bg); }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+    .running .dot { background: var(--good); animation: pulse 1.6s infinite; }
+    .paused .dot { background: var(--warn); }
+    @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+    .meta { color: var(--muted); font-size: 13px; margin-left: auto; }
+    .time { font-size: 52px; font-weight: 700; text-align: center; margin: 6px 0 2px; font-variant-numeric: tabular-nums; }
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); text-align: center; }
+    .label { color: var(--muted); font-size: 12px; }
+    .value { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .unit { font-size: 12px; color: var(--muted); font-weight: 400; }
+    .target { margin-top: 12px; background: var(--bg); border-radius: 14px; padding: 10px 12px; }
+    .target-head { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; font-weight: 600; }
+    .target-head span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .target-head .pct { color: var(--accent); flex-shrink: 0; }
+    .bar { height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; margin: 6px 0 8px; }
+    .bar > div { height: 100%; width: 0; background: var(--accent); border-radius: 99px; transition: width .6s; }
+    .target .stats .value { font-size: 19px; }
+    .notice { margin-top: 10px; padding: 8px 12px; border-radius: 12px; font-size: 14px; background: var(--bg); }
+    .notice.warn { color: var(--bad); }
+    .hint { margin-top: 8px; font-size: 12px; color: var(--muted); text-align: center; }
+    .center { position: absolute; right: 12px; bottom: 30px; z-index: 600; border: 0; border-radius: 14px;
+      background: var(--accent); color: #fff; font-size: 15px; padding: 10px 14px; box-shadow: 0 2px 8px rgba(0,0,0,.25); display: none; }
+    .overlay { position: absolute; inset: 0; z-index: 700; display: flex; align-items: center; justify-content: center;
+      text-align: center; padding: 24px; background: var(--bg); }
+    .overlay h1 { font-size: 22px; margin: 0 0 8px; }
+    .overlay p { color: var(--muted); margin: 0; }
+    .runner { width: 20px; height: 20px; border-radius: 50%; background: #1e88e5; border: 3px solid #fff;
+      box-shadow: 0 0 0 6px rgba(30,136,229,.25); }
+    .tapdot { width: 14px; height: 14px; border-radius: 50%; background: #212121; border: 3px solid #fff; }
+    .leaflet-popup-content { margin: 10px 14px; font: 14px/1.4 system-ui, -apple-system, sans-serif; }
+    .popup-km { color: #71717a; font-size: 12px; }
+    .popup-main { font-weight: 600; font-size: 15px; }
+    .popup-pass + .popup-pass { margin-top: 8px; padding-top: 8px; border-top: 1px solid #e4e4e7; }
+    .cheer { margin-top: 12px; }
+    .cheer-btn { width: 100%; border: 0; border-radius: 14px; padding: 12px; font: inherit; font-size: 16px; font-weight: 600;
+      background: var(--accent); color: #fff; cursor: pointer; }
+    .cheer-form { margin-top: 10px; background: var(--bg); border-radius: 14px; padding: 10px 12px; }
+    .cheer-form input { width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px;
+      font: inherit; font-size: 16px; background: var(--card); color: var(--text); }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+    .chip { border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 999px;
+      padding: 7px 11px; font: inherit; font-size: 14px; cursor: pointer; }
+    .row { display: flex; gap: 6px; }
+    .row input { flex: 1; min-width: 0; }
+    .row button { border: 0; border-radius: 10px; padding: 0 14px; font: inherit; font-weight: 600; background: var(--accent); color: #fff; cursor: pointer; }
+    .cheer-status { font-size: 13px; color: var(--muted); margin-top: 6px; min-height: 1em; }
+    .cheer-list { margin-top: 8px; font-size: 13px; color: var(--muted); }
+    .cheer-list div { padding: 3px 0; }
+    .cheer-list b { color: var(--text); font-weight: 600; }
+    .hidden { display: none !important; }
+    @media (min-width: 900px) {
+      body { flex-direction: row; }
+      .wrap { height: 100%; }
+      .sheet { width: 380px; margin: 0; border-radius: 0; box-shadow: -4px 0 20px rgba(0,0,0,.1); overflow-y: auto; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div id="map"></div>
+    <button class="center" id="center">◎ Zentrieren</button>
+  </div>
+
+  <div class="sheet">
+    <div class="top">
+      <span class="pill" id="status"><span class="dot"></span><span id="status-text">Verbinde …</span></span>
+      <span class="meta" id="meta"></span>
+    </div>
+    <div id="run">
+      <div class="time" id="time">0:00</div>
+      <div class="stats">
+        <div><div class="label">Distanz</div><div class="value"><span id="dist">0,00</span> <span class="unit">km</span></div></div>
+        <div><div class="label">Pace</div><div class="value"><span id="pace">--:--</span> <span class="unit">/km</span></div></div>
+        <div><div class="label">Ø Pace</div><div class="value"><span id="avg">--:--</span> <span class="unit">/km</span></div></div>
+      </div>
+
+      <div class="target hidden" id="target">
+        <div class="target-head"><span id="target-label">Ziel</span><span class="pct" id="target-pct">0 %</span></div>
+        <div class="bar"><div id="target-bar"></div></div>
+        <div class="stats">
+          <div><div class="label">Noch</div><div class="value" id="target-left">–</div></div>
+          <div><div class="label">Endzeit</div><div class="value" id="target-finish">–</div></div>
+          <div><div class="label">Ankunft</div><div class="value" id="target-eta">–</div></div>
+        </div>
+      </div>
+      <div class="hint hidden" id="tap-hint">Tipp auf die blaue Route, um zu sehen, wann der Läufer dort ist.</div>
+
+      <div class="cheer hidden" id="cheer">
+        <button class="cheer-btn" id="cheer-open">📣 Anfeuern</button>
+        <div class="cheer-form hidden" id="cheer-form">
+          <input id="cheer-name" maxlength="30" placeholder="Dein Name (optional)" autocomplete="given-name">
+          <div class="chips" id="cheer-chips"></div>
+          <div class="row">
+            <input id="cheer-text" maxlength="100" placeholder="Eigene Nachricht …" enterkeyhint="send">
+            <button id="cheer-send">Senden</button>
+          </div>
+          <div class="cheer-status" id="cheer-status"></div>
+        </div>
+        <div class="cheer-list" id="cheer-list"></div>
+      </div>
+    </div>
+
+    <div class="notice hidden" id="notice"></div>
+  </div>
+
+  <div class="overlay hidden" id="overlay"><div><h1 id="overlay-title"></h1><p id="overlay-text"></p></div></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="config.js?v=617588c09d"></script>
+  <script>
+  (function () {
+    "use strict";
+    var POLL_MS = 5000;
+    var IDLE_POLL_MS = 15000;
+    var STALE_MS = 60000;
+    var TAP_TOLERANCE_PX = 32;
+    var PASS_TOLERANCE_M = 25;   // weitere Durchgänge: höchstens so viel weiter weg als der nächste
+    var PASS_SEPARATION_M = 150; // Treffer näher beieinander gelten als derselbe Durchgang
+    var CURRENT_PACE_WEIGHT = 0.3; // wie in der App
+    var cfg = window.LIVE_CONFIG || {};
+    var token = decodeURIComponent((location.hash || "").replace(/^#/, "")).trim();
+
+    var $ = function (id) { return document.getElementById(id); };
+    var de = function (n, d) { return n.toLocaleString("de-DE", { minimumFractionDigits: d, maximumFractionDigits: d }); };
+    var pad = function (n) { return (n < 10 ? "0" : "") + n; };
+
+    function fmtDuration(ms) {
+      var t = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+      return h > 0 ? h + ":" + pad(m) + ":" + pad(s) : m + ":" + pad(s);
+    }
+    function fmtPace(sec) {
+      if (sec == null || !isFinite(sec) || sec <= 0 || sec > 1800) return "--:--";
+      var t = Math.round(sec);
+      return Math.floor(t / 60) + ":" + pad(t % 60);
+    }
+    function fmtClock(ms) { var d = new Date(ms + 30000); return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
+    function fmtAgo(ms) {
+      var s = Math.max(0, Math.round(ms / 1000));
+      if (s < 60) return "vor " + s + " s";
+      var m = Math.round(s / 60);
+      return m < 60 ? "vor " + m + " Min." : "vor " + Math.round(m / 60) + " Std.";
+    }
+    function fmtIn(ms) {
+      var m = Math.max(0, Math.round(ms / 60000));
+      if (m < 1) return "gleich";
+      return m < 60 ? "in " + m + " Min." : "in " + Math.floor(m / 60) + " Std. " + (m % 60) + " Min.";
+    }
+    function km(m) { return de(m / 1000, 2); }
+    function targetLabel(m) { var k = m / 1000; return (k % 1 === 0 ? k : de(k, 1)) + " km"; }
+
+    // Supabase-Funktion aufrufen
+    function rpc(fn, body) {
+      var headers = { "apikey": cfg.anonKey, "Content-Type": "application/json" };
+      if (cfg.anonKey.indexOf("eyJ") === 0) headers["Authorization"] = "Bearer " + cfg.anonKey; // nur alte JWT-Schlüssel
+      return fetch(cfg.supabaseUrl.replace(/\/$/, "") + "/rest/v1/rpc/" + fn, {
+        method: "POST", headers: headers, body: JSON.stringify(body)
+      }).then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.text().then(function (t) { return t ? JSON.parse(t) : null; });
+      });
+    }
+
+    // Kleiner Speicher im Browser (z. B. für den Namen beim Anfeuern); funktioniert auch, wenn er gesperrt ist
+    function remember(key, value) {
+      try {
+        if (value === undefined) return localStorage.getItem(key);
+        localStorage.setItem(key, value);
+      } catch (e) { /* privater Modus o. Ä. */ }
+      return null;
+    }
+
+    function showOverlay(title, text) {
+      $("overlay-title").textContent = title;
+      $("overlay-text").textContent = text;
+      $("overlay").classList.remove("hidden");
+    }
+
+    if (!cfg.supabaseUrl || !cfg.anonKey) { showOverlay("Noch nicht eingerichtet", "Die Seite kennt den Server noch nicht."); return; }
+    if (token.length < 20) { showOverlay("Ungültiger Link", "Bitte den vollständigen Link aus der Nachricht öffnen."); return; }
+
+    // ---------- Karte ----------
+    var map = L.map("map", { zoomControl: false }).setView([51.1657, 10.4515], 6);
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap-Mitwirkende</a>'
+    }).addTo(map);
+    var css = getComputedStyle(document.documentElement);
+    var runColor = css.getPropertyValue("--accent").trim() || "#e8590c";
+    var planColor = css.getPropertyValue("--plan").trim() || "#1e88e5";
+    var follow = true;
+    map.on("dragstart", function () { follow = false; $("center").style.display = "block"; });
+    $("center").addEventListener("click", function () {
+      follow = true; $("center").style.display = "none";
+      if (marker) map.setView(marker.getLatLng(), Math.max(map.getZoom(), 16));
+      else if (planLine) map.fitBounds(planLine.getBounds(), { padding: [20, 20] });
+    });
+
+    // ---------- Zustand des aktuellen Laufs ----------
+    var runId = null, lastSeq = -1, data = null;
+    var lines = {}, marker = null, zoomed = false;
+    var route = null;      // { pts: [[lat,lon]], cum: [m], len: m }
+    var planLine = null, tapMarker = null, tapPasses = null;
+    var progressPts = [];  // [progress_m, zeit_ms] der hochgeladenen Punkte
+    var fetchedAt = 0, clockOffset = 0, failures = 0;
+
+    function resetRun() {
+      Object.keys(lines).forEach(function (k) { map.removeLayer(lines[k]); });
+      lines = {};
+      if (marker) { map.removeLayer(marker); marker = null; }
+      if (planLine) { map.removeLayer(planLine); planLine = null; }
+      clearTap();
+      route = null; progressPts = []; lastSeq = -1; zoomed = false; follow = true;
+    }
+
+    // Abstand in Metern (Haversine)
+    function dist(a, b) {
+      var R = 6371008.8, toR = Math.PI / 180;
+      var dLat = (b[0] - a[0]) * toR, dLon = (b[1] - a[1]) * toR;
+      var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(a[0] * toR) * Math.cos(b[0] * toR) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      return 2 * R * Math.asin(Math.sqrt(Math.min(1, h)));
+    }
+
+    function setRoute(pts, len) {
+      var cum = [0];
+      for (var i = 1; i < pts.length; i++) cum.push(cum[i - 1] + dist(pts[i - 1], pts[i]));
+      // Auf die genaue Länge aus der App skalieren (ausgedünnte Punkte sind minimal kürzer)
+      var scale = len && cum[cum.length - 1] > 0 ? len / cum[cum.length - 1] : 1;
+      route = { pts: pts, cum: cum.map(function (c) { return c * scale; }), len: len || cum[cum.length - 1] };
+      planLine = L.polyline(pts, { color: planColor, weight: 9, opacity: .55, lineCap: "round", lineJoin: "round" }).addTo(map);
+      planLine.bringToBack();
+      $("tap-hint").classList.remove("hidden");
+      if (lastSeq < 0) { map.fitBounds(planLine.getBounds(), { padding: [20, 20] }); zoomed = true; }
+    }
+
+    // Alle Stellen der Route nahe einem Kartenpunkt. Führt die Route dort mehrmals vorbei
+    // (Rundkurs, Hin und zurück, Acht), kommt jeder Durchgang einzeln zurück, sortiert nach Strecke.
+    function passesNear(latlng) {
+      var p = map.latLngToLayerPoint(latlng), hits = [];
+      for (var i = 0; i < route.pts.length - 1; i++) {
+        var a = map.latLngToLayerPoint(route.pts[i]), b = map.latLngToLayerPoint(route.pts[i + 1]);
+        var dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+        var t = l2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2)) : 0;
+        var qx = a.x + t * dx, qy = a.y + t * dy;
+        var ll = map.layerPointToLatLng(L.point(qx, qy));
+        hits.push({ px: Math.hypot(p.x - qx, p.y - qy), m: dist([latlng.lat, latlng.lng], [ll.lat, ll.lng]),
+                    along: route.cum[i] + t * (route.cum[i + 1] - route.cum[i]), latlng: ll });
+      }
+      var best = hits.reduce(function (x, h) { return !x || h.px < x.px ? h : x; }, null);
+      if (!best || best.px > TAP_TOLERANCE_PX) return [];
+      var near = hits.filter(function (h) { return h.m <= best.m + PASS_TOLERANCE_M; })
+        .sort(function (x, y) { return x.along - y.along; });
+      var passes = [], cluster = null, lastAlong = -Infinity;
+      near.forEach(function (h) {
+        if (cluster && h.along - lastAlong > PASS_SEPARATION_M) { passes.push(cluster); cluster = null; }
+        if (!cluster || h.m < cluster.m) cluster = h;
+        lastAlong = h.along;
+      });
+      if (cluster) passes.push(cluster);
+      return passes;
+    }
+
+    function passLabel(i, count, along) {
+      if (along < 50) return "Start";
+      if (along > route.len - 50) return "Ziel";
+      return count > 1 ? (i + 1) + ". Durchgang" : "";
+    }
+
+    function projectionPace() {
+      if (!data || data.avg_pace == null) return null;
+      return data.current_pace == null ? data.avg_pace
+        : data.avg_pace * (1 - CURRENT_PACE_WEIGHT) + data.current_pace * CURRENT_PACE_WEIGHT;
+    }
+
+    function tapText(along) {
+      if (!data) return "";
+      if (along <= data.distance_m) {
+        for (var i = 0; i < progressPts.length; i++) {
+          if (progressPts[i][0] >= along) return "Passiert um " + fmtClock(progressPts[i][1]) + " Uhr";
+        }
+        return "Bereits passiert";
+      }
+      if (data.status === "FINISHED") return "Nicht erreicht";
+      var pace = projectionPace();
+      if (pace == null) return "Prognose, sobald die Pace bekannt ist";
+      var ms = (along - data.distance_m) / 1000 * pace * 1000;
+      var serverNow = Date.now() + clockOffset;
+      return "Ankunft ca. " + fmtClock(serverNow + ms) + " Uhr · " + fmtIn(ms);
+    }
+
+    function showTap() {
+      if (!tapPasses || !route) return;
+      var html = tapPasses.map(function (h, i) {
+        var label = passLabel(i, tapPasses.length, h.along);
+        return '<div class="popup-pass"><div class="popup-km">' + (label ? label + " · " : "") + "km " + km(h.along) + " von " + km(route.len) +
+          '</div><div class="popup-main">' + tapText(h.along) + "</div></div>";
+      }).join("");
+      if (tapMarker.getPopup()) tapMarker.setPopupContent(html); else tapMarker.bindPopup(html, { closeButton: true, autoPan: true }).openPopup();
+    }
+
+    function clearTap() {
+      if (tapMarker) { map.removeLayer(tapMarker); tapMarker = null; }
+      tapPasses = null;
+    }
+
+    map.on("click", function (e) {
+      if (!route) return;
+      var passes = passesNear(e.latlng);
+      clearTap();
+      if (!passes.length) return;
+      tapPasses = passes;
+      tapMarker = L.marker(passes[0].latlng, { icon: L.divIcon({ className: "", html: '<div class="tapdot"></div>', iconSize: [14, 14], iconAnchor: [7, 7] }) }).addTo(map);
+      tapMarker.on("popupclose", clearTap);
+      showTap();
+    });
+
+    function addPoints(points) {
+      points.forEach(function (p) {
+        var seq = p[0], lat = p[1], lon = p[2], t = p[3], seg = p[4], prog = p[5];
+        if (!lines[seg]) lines[seg] = L.polyline([], { color: runColor, weight: 6, opacity: .95, lineCap: "round", lineJoin: "round" }).addTo(map);
+        lines[seg].addLatLng([lat, lon]);
+        if (prog != null) progressPts.push([prog, t]);
+        lastSeq = Math.max(lastSeq, seq);
+      });
+      if (!points.length) return;
+      var last = points[points.length - 1];
+      var ll = [last[1], last[2]];
+      if (!marker) marker = L.marker(ll, { icon: L.divIcon({ className: "", html: '<div class="runner"></div>', iconSize: [20, 20], iconAnchor: [10, 10] }), zIndexOffset: 1000 }).addTo(map);
+      else marker.setLatLng(ll);
+      if (follow) {
+        if (!zoomed || map.getZoom() < 14) { map.setView(ll, 16); zoomed = true; } else map.panTo(ll);
+      }
+    }
+
+    // ---------- Anfeuern ----------
+    var CHEER_PRESETS = ["Los, du schaffst das! 💪", "Super Tempo! 🔥", "Fast geschafft!", "Ich warte im Ziel! ❤️"];
+    var cheerBusy = false;
+    $("cheer-name").value = remember("lt_name") || "";
+    CHEER_PRESETS.forEach(function (text) {
+      var b = document.createElement("button");
+      b.className = "chip";
+      b.textContent = text;
+      b.addEventListener("click", function () { sendCheer(text); });
+      $("cheer-chips").appendChild(b);
+    });
+    $("cheer-open").addEventListener("click", function () {
+      $("cheer-form").classList.toggle("hidden");
+    });
+    $("cheer-send").addEventListener("click", function () { sendCheer($("cheer-text").value); });
+    $("cheer-text").addEventListener("keydown", function (e) { if (e.key === "Enter") sendCheer($("cheer-text").value); });
+
+    function cheerStatus(text) { $("cheer-status").textContent = text; }
+
+    function sendCheer(text) {
+      text = (text || "").trim();
+      if (!text || cheerBusy) return;
+      var name = $("cheer-name").value.trim();
+      remember("lt_name", name);
+      cheerBusy = true;
+      cheerStatus("Wird gesendet …");
+      rpc("send_cheer", { p_token: token, p_sender: name || null, p_message: text }).then(function (res) {
+        if (res && res.ok) {
+          $("cheer-text").value = "";
+          cheerStatus("Gesendet ✓ – wird in wenigen Sekunden vorgelesen.");
+          return;
+        }
+        var reason = res && res.reason;
+        cheerStatus(
+          reason === "too_fast" ? "Gerade wurde schon angefeuert – bitte ein paar Sekunden warten." :
+          reason === "no_run" ? "Gerade läuft kein Lauf." :
+          reason === "too_long" ? "Die Nachricht ist zu lang (höchstens 100 Zeichen)." :
+          reason === "limit" ? "Für diesen Lauf ist das Limit an Anfeuerungen erreicht." :
+          "Senden hat nicht geklappt."
+        );
+      }).catch(function () {
+        cheerStatus("Keine Verbindung – bitte nochmal versuchen.");
+      }).then(function () { cheerBusy = false; });
+    }
+
+    // Letzte Anfeuerungen anzeigen (als Text, nie als HTML – sie kommen von anderen Zuschauern)
+    function renderCheers(cheers) {
+      var list = $("cheer-list");
+      list.textContent = "";
+      (cheers || []).forEach(function (c) {
+        var row = document.createElement("div");
+        var who = document.createElement("b");
+        who.textContent = c.sender || "Jemand";
+        row.appendChild(who);
+        var state = c.delivered_at ? " · ✓ vorgelesen " + fmtClock(new Date(c.delivered_at).getTime() - 30000) : " · wird gleich vorgelesen …";
+        row.appendChild(document.createTextNode(": " + c.message + state));
+        list.appendChild(row);
+      });
+    }
+
+    // ---------- Abruf ----------
+    function poll() {
+      rpc("get_live", { p_token: token, p_known_run: runId, p_after_seq: lastSeq }).then(function (json) {
+        failures = 0;
+        if (!json) {
+          showOverlay("Link ungültig", "Dieser Link wurde ersetzt oder gibt es nicht. Bitte nach dem aktuellen Link fragen.");
+          return; // nicht weiter abfragen
+        }
+        $("overlay").classList.add("hidden");
+        fetchedAt = Date.now();
+        clockOffset = new Date(json.server_now).getTime() - fetchedAt;
+        if (!json.active) {
+          if (runId) resetRun();
+          runId = null; data = null;
+          render();
+          setTimeout(poll, IDLE_POLL_MS);
+          return;
+        }
+        if (json.run_id !== runId) { resetRun(); runId = json.run_id; }
+        data = json;
+        if (json.route && !route) setRoute(json.route, json.route_m);
+        addPoints(json.points || []);
+        render();
+        if (tapPasses) showTap();
+        setTimeout(poll, json.status === "FINISHED" ? 30000 : POLL_MS);
+      }).catch(function () {
+        failures++;
+        render();
+        setTimeout(poll, Math.min(POLL_MS * (failures + 1), 30000));
+      });
+    }
+
+    function render() {
+      var notice = $("notice");
+      notice.className = "notice hidden";
+      if (!data) {
+        $("run").classList.add("hidden");
+        $("status").className = "pill";
+        $("status-text").textContent = failures > 0 ? "Keine Verbindung" : (fetchedAt ? "Kein Lauf aktiv" : "Verbinde …");
+        $("meta").textContent = "";
+        if (fetchedAt) {
+          notice.textContent = "Gerade läuft kein Lauf. Diese Seite aktualisiert sich automatisch, sobald es losgeht – einfach offen lassen.";
+          notice.className = "notice";
+        }
+        return;
+      }
+      $("run").classList.remove("hidden");
+      var serverNow = Date.now() + clockOffset;
+      var sinceUpdate = serverNow - new Date(data.updated_at).getTime();
+      var running = data.status === "RUNNING", paused = data.status === "PAUSED", finished = data.status === "FINISHED";
+
+      $("status").className = "pill" + (running ? " running" : paused ? " paused" : "");
+      $("cheer").classList.toggle("hidden", !(running || paused));
+      renderCheers(data.cheers);
+      $("status-text").textContent = running ? "Läuft" : paused ? "Pause" : finished ? "Beendet" : data.status;
+      var meta = "Update " + fmtAgo(sinceUpdate);
+      if (data.battery != null) meta += " · 🔋 " + data.battery + " %";
+      $("meta").textContent = meta;
+
+      // Laufzeit zwischen zwei Abrufen weiterzählen
+      var moving = data.moving_time_ms + (running ? Math.min(sinceUpdate, STALE_MS) : 0);
+      $("time").textContent = fmtDuration(moving);
+      $("dist").textContent = km(data.distance_m);
+      $("pace").textContent = running ? fmtPace(data.current_pace) : "--:--";
+      $("avg").textContent = fmtPace(data.avg_pace);
+
+      if (data.target_m) {
+        $("target").classList.remove("hidden");
+        var pct = Math.min(1, data.distance_m / data.target_m);
+        var reached = data.distance_m >= data.target_m;
+        $("target-label").textContent = data.route_name ? "Route " + data.route_name + " · " + targetLabel(data.target_m) : "Ziel " + targetLabel(data.target_m);
+        $("target-pct").textContent = reached ? "erreicht ✓" : Math.floor(pct * 100) + " %";
+        $("target-bar").style.width = (pct * 100) + "%";
+        $("target-left").textContent = reached ? "0 km" : km(data.target_m - data.distance_m) + " km";
+        if (data.eta && !finished && !reached) {
+          var eta = new Date(data.eta).getTime();
+          $("target-eta").textContent = fmtClock(eta) + " Uhr";
+          $("target-finish").textContent = fmtDuration(moving + (eta - serverNow));
+        } else {
+          $("target-eta").textContent = "–";
+          $("target-finish").textContent = reached ? fmtDuration(moving) : "–";
+        }
+      } else {
+        $("target").classList.add("hidden");
+      }
+
+      if (failures > 1) {
+        notice.textContent = "Keine Verbindung zum Server – neuer Versuch läuft …";
+        notice.className = "notice warn";
+      } else if (running && sinceUpdate > STALE_MS) {
+        notice.textContent = "Seit " + fmtAgo(sinceUpdate).replace("vor ", "") + " kein Signal – vermutlich Funkloch.";
+        notice.className = "notice warn";
+      } else if (running && data.off_route_m != null) {
+        notice.textContent = "Der Läufer ist gerade abseits der Route (" + Math.round(data.off_route_m) + " m).";
+        notice.className = "notice warn";
+      } else if (lastSeq < 0 && !finished) {
+        notice.textContent = "Die Position erscheint in wenigen Sekunden. (Ist die Privatzone an, erst etwa 200 m nach dem Start.)";
+        notice.className = "notice";
+      } else if (finished) {
+        notice.textContent = "Lauf beendet. Er bleibt noch kurze Zeit hier sichtbar.";
+        notice.className = "notice";
+      }
+    }
+
+    poll();
+    setInterval(render, 1000);
+  })();
+  </script>
+</body>
+</html>
